@@ -158,6 +158,7 @@ def main(_):
         except ValueError:
           logging.warning('Invalid example: %s, ignoring.', xml_path)
 
+  print('total is %s' % idx)
 
 if __name__ == '__main__':
   tf.app.run()
