@@ -3,6 +3,7 @@ import random
 import glob
 import h5py
 import argparse
+from PIL import Image
 
 import numpy as np
 import tensorflow as tf
@@ -29,8 +30,10 @@ def parse_fn(string_record, is_training=False):
   if is_training:
     image = tf.image.random_brightness(image, 0.2)
     image = tf.image.random_contrast(image, 0.5, 1.5)
-    noise = tf.random_normal(shape=tf.shape(image), mean=0.0, stddev=0.2, dtype=tf.float32)
-    image = tf.add(image, noise)
+    noise = tf.random_normal(shape=tf.shape(image), mean=0.0, stddev=0.05, dtype=tf.float32)
+    mask = tf.cast(tf.greater(tf.random_uniform(shape=[HEIGHT, WIDTH]), 0.5), tf.float32)
+    mask_noise = tf.multiply(noise, tf.transpose(tf.stack([mask, mask, mask]), perm=[1, 2, 0]))
+    image = tf.add(image, mask_noise)
     image = tf.clip_by_value(image, 0, 1)
   steer, gas, brake = tf.split(example['label'], 3, axis=-1)
   speed = tf.multiply(example['speed'], 1/SPEED_DIV)
@@ -45,7 +48,7 @@ def input_fn(data_dir, batch_size, is_training):
   files = tf.data.Dataset.list_files(os.path.join(data_dir, 'data.record-*'))
   dataset = files.apply(tf.contrib.data.parallel_interleave(
     tf.data.TFRecordDataset, cycle_length=num_parallel_readers))
-  dataset = dataset.shuffle(buffer_size=shuffle_buffer_size)
+  dataset = dataset.repeat().shuffle(buffer_size=shuffle_buffer_size)
   dataset = dataset.apply(tf.contrib.data.map_and_batch(
     map_func=lambda value: parse_fn(value, is_training), batch_size=batch_size))
   dataset = dataset.prefetch(buffer_size=prefetch_buffer_size)
@@ -243,7 +246,7 @@ def create_callbacks(model, args):
     )
     callbacks.append(checkpoint)
 
-  lr_scheduler = keras.callbacks.ReduceLROnPlateau(monitor='loss', factor=0.1, patience=2, verbose=1, mode='auto', epsilon=0.0001, cooldown=0, min_lr=0)
+  lr_scheduler = keras.callbacks.ReduceLROnPlateau(monitor='loss', factor=0.1, patience=2, verbose=1, mode='auto', epsilon=0.0001, cooldown=0, min_lr=1e-10)
   callbacks.append(lr_scheduler)
 
   logging = keras.callbacks.TensorBoard(log_dir=args.log_dir)
@@ -265,6 +268,8 @@ def parse_args():
   parser.add_argument('--train-dir', help='wher images are.', default='data/train')
   parser.add_argument('--val-dir', help='wher images are.', default='data/val')
   parser.add_argument('--lr', help='learning rate', default = 0.0002, type=float)
+  parser.add_argument('--debug',  help='debug image', dest='debug', action='store_true')
+  parser.add_argument('--gpu-fraction',  help='fraction', type=float, default=1.0)
 
   args = parser.parse_args()
   if args.snapshot is not None:
@@ -276,17 +281,46 @@ def train(args):
 
   # tf.enable_eager_execution()
 
+  if args.gpu_fraction < 1.0:
+    config = tf.ConfigProto()
+    config.gpu_options.per_process_gpu_memory_fraction = args.gpu_fraction
+    K.set_session(tf.Session(config=config))
+
   train_data = input_fn(args.train_dir, args.batch_size, True)
   valid_data = input_fn(args.val_dir, args.batch_size, False)
-  # training_iterator = train_data.make_one_shot_iterator()
-  # validation_iterator = valid_data.make_initializable_iterator()
+  if args.debug:
+    training_iterator = train_data.make_one_shot_iterator()
+    validation_iterator = valid_data.make_one_shot_iterator()
+    debug_dir = './debug'
+    if not os.path.exists(debug_dir):
+      os.makedirs(debug_dir)
+    sess = tf.Session()
+    count = 0
+    for iter in [training_iterator]:
+      for i in range(10):
+        data = iter.get_next()
+        kv = data[0].copy()
+        kv.update(data[1])
+        for key, value in kv.items():
+          v = sess.run(value)
+          if key == 'image':
+            for i in range(v.shape[0]):
+              img = (v[i] * 255).astype(np.uint8)
+              img = Image.fromarray(img)
+              img.save(os.path.join(debug_dir, '%04d.jpg' % count))
+              count += 1
+          else:
+            print(key, v[-1])
+    return
 
-  size_training = 657599
+  size_training = 657600
   steps = size_training // args.batch_size
+  size_validation = 374*200
+  validation_steps = 374*200 // args.batch_size
 
   if args.snapshot:
     print('Loading model, this may take a second...')
-    model            = keras.models.load_model(args.snapshot, custom_objects=custom_objects)
+    model            = keras.models.load_model(args.snapshot)
   else:
     print('Creating model, this may take a second...')
     model = create_model(args)
@@ -316,7 +350,7 @@ def train(args):
   callbacks = create_callbacks(model, args)
 
   # Trains for 5 epochs
-  model.fit(train_data, epochs=args.epochs, callbacks=callbacks, validation_data=valid_data, steps_per_epoch=steps)
+  model.fit(train_data, epochs=args.epochs, callbacks=callbacks, validation_data=valid_data, steps_per_epoch=steps, validation_steps=validation_steps)
 
 if __name__ == '__main__':
   args = parse_args()
