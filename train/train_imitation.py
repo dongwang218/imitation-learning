@@ -10,9 +10,9 @@ from tensorflow import keras
 from tensorflow.keras.layers import *
 from tensorflow.keras import backend as K
 
-HEIGHT = 80
+HEIGHT = 88
 WIDTH = 200
-
+SPEED_DIV = 25.0
 WEIGHTS_PATH_NO_TOP = 'https://github.com/fchollet/deep-learning-models/releases/download/v0.2/resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5'
 
 def parse_fn(string_record, is_training=False):
@@ -24,9 +24,8 @@ def parse_fn(string_record, is_training=False):
                                       'image': tf.VarLenFeature(tf.int64),
                                       'label': tf.FixedLenFeature([3], tf.float32)
                                     })
-
   image = tf.sparse_tensor_to_dense(example['image'])
-  image = tf.multiply(tf.cast(tf.reshape(image, shape=[80, 200, 3]), tf.float32), 1.0/255)
+  image = tf.multiply(tf.cast(tf.reshape(image, shape=[HEIGHT, WIDTH, 3]), tf.float32), 1.0/255)
   if is_training:
     image = tf.image.random_brightness(image, 0.2)
     image = tf.image.random_contrast(image, 0.5, 1.5)
@@ -34,8 +33,10 @@ def parse_fn(string_record, is_training=False):
     image = tf.add(image, noise)
     image = tf.clip_by_value(image, 0, 1)
   steer, gas, brake = tf.split(example['label'], 3, axis=-1)
+  speed = tf.multiply(example['speed'], 1/SPEED_DIV)
+  speed_out = tf.multiply(example['speed_out'], 1/SPEED_DIV)
 
-  return {'image': image, 'command': example['command'], 'speed': example['speed']}, {'branch_speed': example['speed_out'], 'steer': steer, 'gas': gas, 'brake': brake}
+  return {'image': image, 'command': example['command'], 'speed': speed}, {'branch_speed': speed_out, 'steer': steer, 'gas': gas, 'brake': brake}
 
 num_parallel_readers=10
 shuffle_buffer_size=1000
@@ -209,7 +210,7 @@ def create_model(args):
       i = keras.layers.Dropout(0.3)(i)
       o = keras.layers.Dense(3, name=b)(i)
       outputs.append(o)
-      this_mask = keras.layers.Lambda(lambda x: keras.backend.cast(keras.backend.equal(x, branch_index), tf.float32))(command_input)
+      this_mask = keras.layers.Lambda(lambda x: keras.backend.cast(keras.backend.equal(x, branch_index), tf.float32), output_shape=[1])(command_input)
       masked = keras.layers.multiply([o, this_mask])
       masked_outputs.append(masked)
   with tf.name_scope('branch_%s' % 'speed'):
@@ -219,9 +220,9 @@ def create_model(args):
     outputs.append(keras.layers.Dense(1, name='branch_speed')(i))
 
   masked = keras.layers.add(masked_outputs)
-  outputs.append(keras.layers.Lambda(lambda x: x[:, 0:1], name='steer')(masked))
-  outputs.append(keras.layers.Lambda(lambda x: x[:, 1:2], name='gas')(masked))
-  outputs.append(keras.layers.Lambda(lambda x: x[:, 2:3], name='brake')(masked))
+  outputs.append(keras.layers.Lambda(lambda x: x[:, 0:1], output_shape=[1], name='steer')(masked))
+  outputs.append(keras.layers.Lambda(lambda x: x[:, 1:2], output_shape=[1], name='gas')(masked))
+  outputs.append(keras.layers.Lambda(lambda x: x[:, 2:3], output_shape=[1], name='brake')(masked))
 
   return keras.Model(inputs = [img_input, command_input, speed_input], outputs = outputs)
 
@@ -261,8 +262,8 @@ def parse_args():
   parser.add_argument('--log-dir', help='Path to store logs of models during training', default='./logs')
   parser.add_argument('--no-snapshots',  help='Disable saving snapshots.', dest='snapshots', action='store_false')
   parser.add_argument('--no-evaluation', help='Disable per epoch evaluation.', dest='evaluation', action='store_false')
-  parser.add_argument('--train_dir', help='wher images are.', default='data/train')
-  parser.add_argument('--val_dir', help='wher images are.', default='data/val')
+  parser.add_argument('--train-dir', help='wher images are.', default='data/train')
+  parser.add_argument('--val-dir', help='wher images are.', default='data/val')
   parser.add_argument('--lr', help='learning rate', default = 0.0002, type=float)
 
   args = parser.parse_args()
@@ -273,11 +274,15 @@ def parse_args():
 
 def train(args):
 
+  # tf.enable_eager_execution()
+
   train_data = input_fn(args.train_dir, args.batch_size, True)
   valid_data = input_fn(args.val_dir, args.batch_size, False)
+  # training_iterator = train_data.make_one_shot_iterator()
+  # validation_iterator = valid_data.make_initializable_iterator()
 
   size_training = 657599
-  steps = 1 #size_training // args.batch_size
+  steps = size_training // args.batch_size
 
   if args.snapshot:
     print('Loading model, this may take a second...')
@@ -302,7 +307,9 @@ def train(args):
 
 
   # The compile step specifies the training configuration.
-  model.compile(optimizer=keras.optimizers.Adam(args.lr),
+  adam = keras.optimizers.Adam(args.lr)
+  optimizer = adam
+  model.compile(optimizer=optimizer,
                 loss=losses, loss_weights=lossWeights,
                 metrics=['mse'])
 
