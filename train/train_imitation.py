@@ -48,7 +48,7 @@ def input_fn(data_dir, batch_size, is_training):
   files = tf.data.Dataset.list_files(os.path.join(data_dir, 'data.record-*'))
   dataset = files.apply(tf.contrib.data.parallel_interleave(
     tf.data.TFRecordDataset, cycle_length=num_parallel_readers))
-  dataset = dataset.repeat().shuffle(buffer_size=shuffle_buffer_size)
+  dataset = dataset.shuffle(buffer_size=shuffle_buffer_size) # repeat() cause cuda oom
   dataset = dataset.apply(tf.contrib.data.map_and_batch(
     map_func=lambda value: parse_fn(value, is_training), batch_size=batch_size))
   dataset = dataset.prefetch(buffer_size=prefetch_buffer_size)
@@ -270,6 +270,7 @@ def parse_args():
   parser.add_argument('--lr', help='learning rate', default = 0.0002, type=float)
   parser.add_argument('--debug',  help='debug image', dest='debug', action='store_true')
   parser.add_argument('--gpu-fraction',  help='fraction', type=float, default=1.0)
+  parser.add_argument('--save-pb-path',  help='store model pb')
 
   args = parser.parse_args()
   if args.snapshot is not None:
@@ -318,12 +319,30 @@ def train(args):
   size_validation = 374*200
   validation_steps = 374*200 // args.batch_size
 
+  if args.save_pb_path:
+    K.set_learning_phase(0)
+
   if args.snapshot:
     print('Loading model, this may take a second...')
     model            = keras.models.load_model(args.snapshot)
   else:
     print('Creating model, this may take a second...')
     model = create_model(args)
+
+  if args.save_pb_path:
+
+    from tensorflow.python.framework import tensor_shape, graph_util
+    from tensorflow.python.platform import gfile
+    sess = K.get_session()
+    # follow/BiasAdd', u'staight/BiasAdd', u'left/BiasAdd', u'right/BiasAdd'
+    output_names = [out.name.replace(':0', '') for out in model.outputs[:5]]
+    #u'image', u'command', u'speed'
+    input_names = [out.name.replace(':0', '') for out in model.inputs]
+    output_graph_def = graph_util.convert_variables_to_constants(sess, sess.graph.as_graph_def(), output_names)
+    with gfile.FastGFile(args.save_pb_path, 'wb') as f:
+      f.write(output_graph_def.SerializeToString())
+    print('output_names', output_names, 'inputs', input_names)
+    return
 
   losses = {
     'steer': 'mean_squared_error',

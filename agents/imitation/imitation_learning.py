@@ -11,15 +11,16 @@ slim = tf.contrib.slim
 
 from carla.agent import Agent
 from carla.carla_server_pb2 import Control
-from agents.imitation.imitation_learning_network import load_imitation_learning_network
+from agents.imitation.imitation_learning_network import load_imitation_learning_network, load_new_network
 
 
 class ImitationLearning(Agent):
 
-    def __init__(self, city_name, avoid_stopping, memory_fraction=0.25, image_cut=[115, 510]):
+    def __init__(self, city_name, avoid_stopping, memory_fraction=0.25, image_cut=[115, 510], new_model=False):
 
         Agent.__init__(self)
 
+        dir_path = os.path.dirname(__file__)
         self.dropout_vec = [1.0] * 8 + [0.7] * 2 + [0.5] * 2 + [0.5] * 1 + [0.5, 1.] * 5
 
         config_gpu = tf.ConfigProto()
@@ -51,20 +52,22 @@ class ImitationLearning(Agent):
 
             self._dout = tf.placeholder("float", shape=[len(self.dropout_vec)])
 
-        with tf.name_scope("Network"):
+        if new_model:
+          self._models_path = dir_path + '/../../train/snapshots17/imitation_resnet_17.pb'
+          self._network_tensor = load_new_network(self._input_images,
+                                                  self._input_data, self._sess, self._models_path)
+        else:
+          with tf.name_scope("Network"):
             self._network_tensor = load_imitation_learning_network(self._input_images,
                                                                    self._input_data,
                                                                    self._image_size, self._dout)
 
-        import os
-        dir_path = os.path.dirname(__file__)
+          self._models_path = dir_path + '/model/'
 
-        self._models_path = dir_path + '/model/'
+          # tf.reset_default_graph()
+          self._sess.run(tf.global_variables_initializer())
 
-        # tf.reset_default_graph()
-        self._sess.run(tf.global_variables_initializer())
-
-        self.load_model()
+          self.load_model()
 
         self._image_cut = image_cut
 

@@ -1,6 +1,8 @@
 import argparse
 import logging
+import sys
 
+sys.path.append('/host/workspace/robotics/carla/PythonClient')
 from carla.driving_benchmark import run_driving_benchmark
 from carla.driving_benchmark.experiment_suites import CoRL2017
 
@@ -54,6 +56,12 @@ if (__name__ == '__main__'):
         action='store_true',
         help='If you want to continue the experiment with the given log name'
     )
+    argparser.add_argument(
+        '--new-model',
+        default=False,
+        action='store_true',
+        help=' Uses the new model'
+    )
 
     args = argparser.parse_args()
 
@@ -62,7 +70,11 @@ if (__name__ == '__main__'):
 
     logging.info('listening to server %s:%s', args.host, args.port)
 
-    agent = ImitationLearning(args.city_name, args.avoid_stopping)
+    if args.new_model:
+      memory_fraction = 0.75
+    else:
+      memory_fraction = 0.25
+    agent = ImitationLearning(args.city_name, args.avoid_stopping, new_model=args.new_model, memory_fraction=memory_fraction)
 
     corl = CoRL2017(args.city_name)
 
