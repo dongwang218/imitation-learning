@@ -130,7 +130,7 @@ def main(_):
         elif command == 3:
           command = 2 # left
         elif command == 4:
-          commandn = 3 # right
+          command = 3 # right
         else:
           assert(False)
         label = row_data[np.array([STEER, GAS, BRAKE])]
