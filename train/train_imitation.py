@@ -26,8 +26,9 @@ def parse_fn(string_record, is_training=False):
                                       'label': tf.FixedLenFeature([3], tf.float32)
                                     })
   image = tf.sparse_tensor_to_dense(example['image'])
-  image = tf.multiply(tf.cast(tf.reshape(image, shape=[HEIGHT, WIDTH, 3]), tf.float32), 1.0/255)
+  image = tf.cast(tf.reshape(image, shape=[HEIGHT, WIDTH, 3]), tf.float32)
   if is_training:
+    image = tf.multiply(image, 1.0/255)
     image = tf.image.random_brightness(image, 0.2)
     image = tf.image.random_contrast(image, 0.5, 1.5)
     noise = tf.random_normal(shape=tf.shape(image), mean=0.0, stddev=0.05, dtype=tf.float32)
@@ -35,6 +36,7 @@ def parse_fn(string_record, is_training=False):
     mask_noise = tf.multiply(noise, tf.transpose(tf.stack([mask, mask, mask]), perm=[1, 2, 0]))
     image = tf.add(image, mask_noise)
     image = tf.clip_by_value(image, 0, 1)
+    image = tf.multiply(image, 255.0)
   steer, gas, brake = tf.split(example['label'], 3, axis=-1)
   speed = tf.multiply(example['speed'], 1/SPEED_DIV)
   speed_out = tf.multiply(example['speed_out'], 1/SPEED_DIV)
@@ -139,11 +141,15 @@ def conv_block(input_tensor, kernel_size, filters, stage, block, strides=(2,
   x = Activation('relu')(x)
   return x
 
-def simple_resnet(img_input, weights):
+def simple_resnet(img_input, weights, freeze_resnet):
   bn_axis = 3
 
+  mean = [103.939, 116.779, 123.68]
+  x = keras.layers.Lambda(lambda x: K.bias_add(x[..., ::-1], K.constant(-np.array(mean), dtype=tf.float32, shape=[3])), output_shape=[HEIGHT, WIDTH, 3])(img_input)
+
+
   x = keras.layers.Conv2D(
-      64, (7, 7), strides=(2, 2), padding='same', name='conv1')(img_input)
+      64, (7, 7), strides=(2, 2), padding='same', name='conv1')(x)
   x = keras.layers.BatchNormalization(axis=bn_axis, name='bn_conv1')(x)
   x = keras.layers.Activation('relu')(x)
   x = keras.layers.MaxPooling2D((3, 3), strides=(2, 2))(x)
@@ -180,17 +186,23 @@ def simple_resnet(img_input, weights):
         cache_subdir='models',
         md5_hash='a268eb855778b3df3c7506639542a6af')
     model.load_weights(weights_path)
+  if freeze_resnet:
+    for layer in model.layers:
+      layer.trainable = False
+
   return model
 
 def create_model(args):
   inputs = keras.Input(shape=(32,))  # Returns a placeholder tensor
 
+  # 0 to 255 rgb image
   img_input = keras.Input(shape=(HEIGHT, WIDTH, 3), dtype='float32', name='image')
   speed_input = keras.Input(shape=(1,), dtype='float32', name='speed')
   command_input = keras.Input(shape=(1,), dtype='int32', name='command')
 
-  resnet = simple_resnet(img_input, args.weights)
+  resnet = simple_resnet(img_input, args.weights, args.freeze_resnet)
   img_output = keras.layers.Flatten()(resnet.output)
+  img_output = keras.layers.Dropout(0.5)(img_output)
 
   with tf.name_scope('speed'):
     speed = keras.layers.Dense(64, activation='relu')(speed_input)
@@ -201,7 +213,7 @@ def create_model(args):
   j = keras.layers.Concatenate()([img_output, speed])
   j = keras.layers.Dense(512, activation='relu')(j)
   j = keras.layers.BatchNormalization()(j)
-  together = keras.layers.Dropout(0.3)(j)
+  together = keras.layers.Dropout(0.5)(j)
 
   branches = ['follow', 'staight', 'left', 'right']
   outputs = []
@@ -210,7 +222,7 @@ def create_model(args):
     with tf.name_scope('branch_%s' % b):
       i = keras.layers.Dense(256, activation='relu')(together)
       i = keras.layers.BatchNormalization()(i)
-      i = keras.layers.Dropout(0.3)(i)
+      i = keras.layers.Dropout(0.5)(i)
       o = keras.layers.Dense(3, name=b)(i)
       outputs.append(o)
       this_mask = keras.layers.Lambda(lambda x: keras.backend.cast(keras.backend.equal(x, branch_index), tf.float32), output_shape=[1])(command_input)
@@ -219,7 +231,7 @@ def create_model(args):
   with tf.name_scope('branch_%s' % 'speed'):
     i = keras.layers.Dense(256, activation='relu')(together)
     i = keras.layers.BatchNormalization()(i)
-    i = keras.layers.Dropout(0.3)(i)
+    i = keras.layers.Dropout(0.5)(i)
     outputs.append(keras.layers.Dense(1, name='branch_speed')(i))
 
   masked = keras.layers.add(masked_outputs)
@@ -271,6 +283,7 @@ def parse_args():
   parser.add_argument('--debug',  help='debug image', dest='debug', action='store_true')
   parser.add_argument('--gpu-fraction',  help='fraction', type=float, default=1.0)
   parser.add_argument('--save-pb-path',  help='store model pb')
+  parser.add_argument('--no-freeze-resnet',  help='trainable resnet', dest='freeze_resnet', action='store_false')
 
   args = parser.parse_args()
   if args.snapshot is not None:
