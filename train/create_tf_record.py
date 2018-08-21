@@ -15,10 +15,6 @@
 
 r"""Convert the CORL2017ImitationLearningData to TFRecord.
 
-Example usage:
-    python object_detection/dataset_tools/create_pet_tf_record.py \
-        --data_dir=/home/user/pet \
-        --output_dir=/home/user/pet/output
 """
 
 import io
