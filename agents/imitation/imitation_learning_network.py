@@ -196,7 +196,6 @@ def load_imitation_learning_network(input_image, input_data, input_size, dropout
 
 def load_new_network(input_image, input_data, sess, model_path):
   with open(model_path, 'rb') as f:
-    with sess:
       graph_def = tf.GraphDef()
       graph_def.ParseFromString(f.read())
       input_map = {'image': input_image, 'speed': input_data[1]}

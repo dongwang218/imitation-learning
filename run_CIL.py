@@ -57,9 +57,7 @@ if (__name__ == '__main__'):
         help='If you want to continue the experiment with the given log name'
     )
     argparser.add_argument(
-        '--new-model',
-        default=False,
-        action='store_true',
+        '--new-model', type=str,
         help=' Uses the new model'
     )
 

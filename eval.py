@@ -34,9 +34,7 @@ if (__name__ == '__main__'):
       help=' Uses the speed prediction branch to avoid unwanted agent stops'
   )
   argparser.add_argument(
-      '--new-model',
-      default=False,
-      action='store_true',
+      '--new-model', type=str,
       help=' Uses the new model'
   )
   argparser.add_argument(
@@ -76,7 +74,8 @@ if (__name__ == '__main__'):
       label = row_data[np.array([STEER, GAS, BRAKE])]
 
       image_input = img.astype(np.float32)
-      image_input = np.multiply(image_input, 1.0 / 255.0)
+      if not args.new_model:
+        image_input = np.multiply(image_input, 1.0 / 255.0)
 
       steer, gas, brake = agent._control_function(image_input, np.array([[speed]]), command, agent._sess)
       error[0] += get_mae(steer, row_data[0])

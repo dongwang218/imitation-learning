@@ -16,7 +16,7 @@ from agents.imitation.imitation_learning_network import load_imitation_learning_
 
 class ImitationLearning(Agent):
 
-    def __init__(self, city_name, avoid_stopping, memory_fraction=0.25, image_cut=[115, 510], new_model=False):
+    def __init__(self, city_name, avoid_stopping, memory_fraction=0.25, image_cut=[115, 510], new_model=None):
 
         Agent.__init__(self)
 
@@ -35,6 +35,7 @@ class ImitationLearning(Agent):
         self._avoid_stopping = avoid_stopping
 
         self._sess = tf.Session(config=config_gpu)
+        self.new_model = new_model
 
         with tf.device('/gpu:0'):
             self._input_images = tf.placeholder("float", shape=[None, self._image_size[0],
@@ -53,7 +54,7 @@ class ImitationLearning(Agent):
             self._dout = tf.placeholder("float", shape=[len(self.dropout_vec)])
 
         if new_model:
-          self._models_path = dir_path + '/../../train/snapshots17/imitation_resnet_17.pb'
+          self._models_path = new_model
           self._network_tensor = load_new_network(self._input_images,
                                                   self._input_data, self._sess, self._models_path)
         else:
@@ -104,7 +105,8 @@ class ImitationLearning(Agent):
                                                       self._image_size[1]])
 
         image_input = image_input.astype(np.float32)
-        image_input = np.multiply(image_input, 1.0 / 255.0)
+        if not self.new_model:
+          image_input = np.multiply(image_input, 1.0 / 255.0)
 
         steer, acc, brake = self._control_function(image_input, speed, direction, self._sess)
 

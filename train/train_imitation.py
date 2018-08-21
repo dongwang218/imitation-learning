@@ -16,7 +16,8 @@ WIDTH = 200
 SPEED_DIV = 25.0
 WEIGHTS_PATH_NO_TOP = 'https://github.com/fchollet/deep-learning-models/releases/download/v0.2/resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5'
 
-def parse_fn(string_record, is_training=False):
+# AUGMENTATION_FACTOR = 0.5 # smaller is less
+def parse_fn(string_record, is_training=False, AUGMENTATION_FACTOR=1.0):
   example = tf.parse_single_example(string_record,
                                     features={
                                       'command': tf.FixedLenFeature([1], tf.int64),
@@ -29,10 +30,10 @@ def parse_fn(string_record, is_training=False):
   image = tf.cast(tf.reshape(image, shape=[HEIGHT, WIDTH, 3]), tf.float32)
   if is_training:
     image = tf.multiply(image, 1.0/255)
-    image = tf.image.random_brightness(image, 0.2)
-    image = tf.image.random_contrast(image, 0.5, 1.5)
+    image = tf.image.random_brightness(image, 0.2*AUGMENTATION_FACTOR)
+    image = tf.image.random_contrast(image, 1-0.5*AUGMENTATION_FACTOR, 1+0.5*AUGMENTATION_FACTOR)
     noise = tf.random_normal(shape=tf.shape(image), mean=0.0, stddev=0.05, dtype=tf.float32)
-    mask = tf.cast(tf.greater(tf.random_uniform(shape=[HEIGHT, WIDTH]), 0.5), tf.float32)
+    mask = tf.cast(tf.less(tf.random_uniform(shape=[HEIGHT, WIDTH]), 0.5*AUGMENTATION_FACTOR), tf.float32)
     mask_noise = tf.multiply(noise, tf.transpose(tf.stack([mask, mask, mask]), perm=[1, 2, 0]))
     image = tf.add(image, mask_noise)
     image = tf.clip_by_value(image, 0, 1)
@@ -46,13 +47,13 @@ def parse_fn(string_record, is_training=False):
 num_parallel_readers=10
 shuffle_buffer_size=1000
 prefetch_buffer_size=1000
-def input_fn(data_dir, batch_size, is_training):
+def input_fn(data_dir, batch_size, is_training, aug_factor):
   files = tf.data.Dataset.list_files(os.path.join(data_dir, 'data.record-*'))
   dataset = files.apply(tf.contrib.data.parallel_interleave(
     tf.data.TFRecordDataset, cycle_length=num_parallel_readers))
   dataset = dataset.shuffle(buffer_size=shuffle_buffer_size) # repeat() cause cuda oom
   dataset = dataset.apply(tf.contrib.data.map_and_batch(
-    map_func=lambda value: parse_fn(value, is_training), batch_size=batch_size))
+    map_func=lambda value: parse_fn(value, is_training, aug_factor), batch_size=batch_size))
   dataset = dataset.prefetch(buffer_size=prefetch_buffer_size)
   return dataset
 
@@ -202,18 +203,18 @@ def create_model(args):
 
   resnet = simple_resnet(img_input, args.weights, args.freeze_resnet)
   img_output = keras.layers.Flatten()(resnet.output)
-  img_output = keras.layers.Dropout(0.5)(img_output)
+  img_output = keras.layers.Dropout(0.5*args.dropout_factor)(img_output)
 
   with tf.name_scope('speed'):
     speed = keras.layers.Dense(64, activation='relu')(speed_input)
-    speed = keras.layers.Dropout(0.3)(speed)
+    speed = keras.layers.Dropout(0.3*args.dropout_factor)(speed)
     speed = keras.layers.Dense(128, activation='relu')(speed)
-    speed = keras.layers.Dropout(0.3)(speed)
+    speed = keras.layers.Dropout(0.3*args.dropout_factor)(speed)
 
   j = keras.layers.Concatenate()([img_output, speed])
   j = keras.layers.Dense(512, activation='relu')(j)
   j = keras.layers.BatchNormalization()(j)
-  together = keras.layers.Dropout(0.5)(j)
+  together = keras.layers.Dropout(0.5*args.dropout_factor)(j)
 
   branches = ['follow', 'staight', 'left', 'right']
   outputs = []
@@ -222,7 +223,7 @@ def create_model(args):
     with tf.name_scope('branch_%s' % b):
       i = keras.layers.Dense(256, activation='relu')(together)
       i = keras.layers.BatchNormalization()(i)
-      i = keras.layers.Dropout(0.5)(i)
+      i = keras.layers.Dropout(0.5*args.dropout_factor)(i)
       o = keras.layers.Dense(3, name=b)(i)
       outputs.append(o)
       this_mask = keras.layers.Lambda(lambda x: keras.backend.cast(keras.backend.equal(x, branch_index), tf.float32), output_shape=[1])(command_input)
@@ -231,7 +232,7 @@ def create_model(args):
   with tf.name_scope('branch_%s' % 'speed'):
     i = keras.layers.Dense(256, activation='relu')(together)
     i = keras.layers.BatchNormalization()(i)
-    i = keras.layers.Dropout(0.5)(i)
+    i = keras.layers.Dropout(0.5*args.dropout_factor)(i)
     outputs.append(keras.layers.Dense(1, name='branch_speed')(i))
 
   masked = keras.layers.add(masked_outputs)
@@ -270,23 +271,26 @@ def parse_args():
   parser     = argparse.ArgumentParser(description='Simple training script.')
   parser.add_argument('--snapshot', help='Snapshot to resume training with.')
   parser.add_argument('--weights',  help='Weights to use for initialization (defaults to \'imagenet\').', default='imagenet')
+  parser.add_argument('--snapshot-weight-path',  help='load keras model weight')
 
   parser.add_argument('--batch-size',    help='Size of the batches.', default=120, type=int)
   parser.add_argument('--epochs',        help='Number of epochs to train.', type=int, default=50)
   parser.add_argument('--snapshot-path', help='Path to store snapshots of models during training (defaults to \'./snapshots\')', default='./snapshots')
   parser.add_argument('--log-dir', help='Path to store logs of models during training', default='./logs')
   parser.add_argument('--no-snapshots',  help='Disable saving snapshots.', dest='snapshots', action='store_false')
-  parser.add_argument('--no-evaluation', help='Disable per epoch evaluation.', dest='evaluation', action='store_false')
   parser.add_argument('--train-dir', help='wher images are.', default='data/train')
   parser.add_argument('--val-dir', help='wher images are.', default='data/val')
   parser.add_argument('--lr', help='learning rate', default = 0.0002, type=float)
   parser.add_argument('--debug',  help='debug image', dest='debug', action='store_true')
   parser.add_argument('--gpu-fraction',  help='fraction', type=float, default=1.0)
   parser.add_argument('--save-pb-path',  help='store model pb')
+  parser.add_argument('--save-weight-path',  help='store keras model weight')
   parser.add_argument('--no-freeze-resnet',  help='trainable resnet', dest='freeze_resnet', action='store_false')
+  parser.add_argument('--aug-factor',  help='augmentation factor, 0 no aug, 2 is max aug', type=float, default=1.0)
+  parser.add_argument('--dropout-factor',  help='dropout factor, 0 no aug, 2 is drop everything', type=float, default=1.0)
 
   args = parser.parse_args()
-  if args.snapshot is not None:
+  if args.snapshot is not None or args.snapshot_weight_path is not None:
     args.weights = None
 
   return args
@@ -300,8 +304,8 @@ def train(args):
     config.gpu_options.per_process_gpu_memory_fraction = args.gpu_fraction
     K.set_session(tf.Session(config=config))
 
-  train_data = input_fn(args.train_dir, args.batch_size, True)
-  valid_data = input_fn(args.val_dir, args.batch_size, False)
+  train_data = input_fn(args.train_dir, args.batch_size, True, args.aug_factor)
+  valid_data = input_fn(args.val_dir, args.batch_size, False, args.aug_factor)
   if args.debug:
     training_iterator = train_data.make_one_shot_iterator()
     validation_iterator = valid_data.make_one_shot_iterator()
@@ -342,6 +346,10 @@ def train(args):
     print('Creating model, this may take a second...')
     model = create_model(args)
 
+  if args.snapshot_weight_path is not None:
+    # useful when we change dropout
+    model.load_weights(args.snapshot_weight_path)
+
   if args.save_pb_path:
 
     from tensorflow.python.framework import tensor_shape, graph_util
@@ -355,6 +363,10 @@ def train(args):
     with gfile.FastGFile(args.save_pb_path, 'wb') as f:
       f.write(output_graph_def.SerializeToString())
     print('output_names', output_names, 'inputs', input_names)
+    return
+
+  if args.save_weight_path:
+    model.save_weights(args.save_weight_path)
     return
 
   losses = {
