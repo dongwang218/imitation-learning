@@ -1,25 +1,16 @@
 #!/bin/bash
 set -e
 
-for i in `seq 1 50`; do
+for i in `seq 1 15`; do
     echo "epoch $i"
     j=`expr $i - 1` || true
-    if [ "$i" -gt 40 ]; then
+    if [ "$i" -gt 10 ]; then
         lr=0.000001
-    elif [ "$i" -gt 30 ]; then
+    elif [ "$i" -gt 5 ]; then
         lr=0.00001
-    elif [ "$i" -gt 20 ]; then
-        lr=0.00005
-    elif [ "$i" -gt 10 ]; then
+    else
         lr=0.0001
-    else
-        lr=0.0002
     fi
-    if [ "$i" -eq 1 ]; then
-        prev=""
-    else
-        prev="--snapshot ./snapshots$j/imitation_resnet_01.h5"
-    fi
-    echo "python train_imitation.py --gpu-fraction 0.68 --lr $lr --epochs 1 $prev --snapshot-path ./snapshots$i --log-dir logs$i > mylogs$i.txt 2>&1" || true
-    python train_imitation.py  --gpu-fraction 0.68 --lr $lr --epochs 1 $prev --snapshot-path ./snapshots$i --log-dir logs$i > mylogs$i.txt 2>&1
+    echo "python train_imitation.py  --lr $lr --no-freeze-resnet --aug-factor 0.5 --dropout-factor 0.6  --epochs 1 --snapshot-weight-path ft_snapshot$j/imitation_resnet_01_weights.h5  --snapshot-path ft_snapshot$i --log-dir ft_logs$i > mylogs_ft$i.txt 2>&1" || true
+    python train_imitation.py  --lr $lr --no-freeze-resnet --aug-factor 0.5 --dropout-factor 0.6  --epochs 1 --snapshot-weight-path ft_snapshot$j/imitation_resnet_01_weights.h5  --snapshot-path ft_snapshot$i --log-dir ft_logs$i > mylogs_ft$i.txt 2>&1
 done

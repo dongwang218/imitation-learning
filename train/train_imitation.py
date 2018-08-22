@@ -194,7 +194,6 @@ def simple_resnet(img_input, weights, freeze_resnet):
   return model
 
 def create_model(args):
-  inputs = keras.Input(shape=(32,))  # Returns a placeholder tensor
 
   # 0 to 255 rgb image
   img_input = keras.Input(shape=(HEIGHT, WIDTH, 3), dtype='float32', name='image')
@@ -203,13 +202,13 @@ def create_model(args):
 
   resnet = simple_resnet(img_input, args.weights, args.freeze_resnet)
   img_output = keras.layers.Flatten()(resnet.output)
-  img_output = keras.layers.Dropout(0.5*args.dropout_factor)(img_output)
+  img_output = keras.layers.Dropout(0.7*args.dropout_factor)(img_output)
 
   with tf.name_scope('speed'):
     speed = keras.layers.Dense(64, activation='relu')(speed_input)
-    speed = keras.layers.Dropout(0.3*args.dropout_factor)(speed)
+    speed = keras.layers.Dropout(0.5*args.dropout_factor)(speed)
     speed = keras.layers.Dense(128, activation='relu')(speed)
-    speed = keras.layers.Dropout(0.3*args.dropout_factor)(speed)
+    speed = keras.layers.Dropout(0.5*args.dropout_factor)(speed)
 
   j = keras.layers.Concatenate()([img_output, speed])
   j = keras.layers.Dense(512, activation='relu')(j)
@@ -253,9 +252,9 @@ def create_callbacks(model, args):
     checkpoint = keras.callbacks.ModelCheckpoint(
       os.path.join(
         args.snapshot_path,
-        'imitation_{dataset_type}_{{epoch:02d}}.h5'.format(dataset_type='resnet')
+        'imitation_{dataset_type}_{{epoch:02d}}_weights.h5'.format(dataset_type='resnet')
       ),
-      verbose=1
+      verbose=1, save_weights_only=True
     )
     callbacks.append(checkpoint)
 
@@ -385,7 +384,7 @@ def train(args):
 
 
   # The compile step specifies the training configuration.
-  adam = keras.optimizers.Adam(args.lr)
+  adam = keras.optimizers.Adam(args.lr, clipvalue=0.1)
   optimizer = adam
   model.compile(optimizer=optimizer,
                 loss=losses, loss_weights=lossWeights,
