@@ -181,5 +181,7 @@ class ImitationLearning(Agent):
                 predicted_brake = 0.0
 
                 predicted_acc = predicted_acc[0][0]
+            elif abs(predicted_acc) > 0.1 and abs(predicted_brake) > 0.1:
+              predicted_brake = 0.0
 
         return predicted_steers, predicted_acc, predicted_brake

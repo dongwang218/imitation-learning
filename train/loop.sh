@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-for i in `seq 1 15`; do
+for i in `seq 1 30`; do
     echo "epoch $i"
     j=`expr $i - 1` || true
     if [ "$i" -gt 10 ]; then

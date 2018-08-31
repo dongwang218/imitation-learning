@@ -201,6 +201,6 @@ def load_new_network(input_image, input_data, sess, model_path):
       input_map = {'image': input_image, 'speed': input_data[1]}
       _ = tf.import_graph_def(graph_def, input_map=input_map, name='Network')
       branches = []
-      output_names = ['follow/BiasAdd', 'staight/BiasAdd', 'left/BiasAdd', 'right/BiasAdd', 'branch_speed/BiasAdd']
+      output_names = ['branch_follow/follow/BiasAdd', 'branch_staight/staight/BiasAdd', 'branch_left/left/BiasAdd', 'branch_right/right/BiasAdd', 'branch_speed/branch_speed/BiasAdd']
       branches = [sess.graph.get_tensor_by_name('Network/%s:0' % n) for n in output_names]
       return branches
